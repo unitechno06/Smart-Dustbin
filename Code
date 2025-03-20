@@ -1,0 +1,158 @@
+#define BLYNK_TEMPLATE_ID "TMPL30nmSj1oy"
+#define BLYNK_TEMPLATE_NAME "Smart Dustbin"
+#define BLYNK_AUTH_TOKEN "nCg8Ik9GMQRY74XpIRuW62SwEQO4Acw_"
+
+#include <Servo.h>
+#include <BlynkSimpleEsp8266.h>
+
+// Wi-Fi credentials
+char auth[] = "nCg8Ik9GMQRY74XpIRuW62SwEQO4Acw_";
+char ssid[] = "GITAM";
+char pass[] = "Gitam$$123";
+
+// Pin Definitions
+const int irSensorPin = D3;
+const int trigPin = D1;
+const int echoPin = D2;
+const int servoPin1 = D5;
+const int servoPin2 = D7;
+const int buzzerPin = D4;
+
+// Constants
+const int binFullThreshold = 5;
+const int binHeight = 21;
+const int beepDuration = 2000;
+const int beepFrequency = 4500;
+
+// Variables
+bool isBinFull = false;
+bool manualControl = false;
+int distance = 0;
+int binLevel = 0;
+unsigned long lastBinCheckTime = 0;
+const unsigned long binCheckInterval = 5000;  // Check bin level every 5 seconds
+
+Servo servoMotor1;
+Servo servoMotor2;
+
+void setup() {
+    Serial.begin(115200);
+    Blynk.begin(auth, ssid, pass);
+
+    pinMode(irSensorPin, INPUT);
+    pinMode(trigPin, OUTPUT);
+    pinMode(echoPin, INPUT);
+    pinMode(buzzerPin, OUTPUT);
+
+    servoMotor1.attach(servoPin1);
+    servoMotor2.attach(servoPin2);
+    
+    closeLid();
+    Serial.println("✅ Smart Dustbin Initialized!");
+}
+
+// Handle manual control from Blynk
+BLYNK_WRITE(V3) {  
+    int buttonState = param.asInt();
+    if (buttonState == 1) {
+        Serial.println("🟢 Manual control: Opening lid.");
+        openLid();
+        manualControl = true;
+    } else {
+        Serial.println("🔴 Manual control: Closing lid.");
+        closeLid();
+        manualControl = false;
+    }
+}
+
+void loop() {
+    Blynk.run();
+
+    if (!manualControl) {
+        int sensorState = digitalRead(irSensorPin);
+        if (sensorState == LOW) {
+            Serial.println("🔵 Object detected! Opening lid.");
+            openLid();
+            delay(2000);
+        } else {
+            closeLid();
+        }
+    }
+
+    // Bin level check (every 5 seconds)
+    if (millis() - lastBinCheckTime > binCheckInterval) {
+        lastBinCheckTime = millis();
+        checkBinLevel();
+    }
+}
+
+// Function to check bin level and send updates to Blynk
+void checkBinLevel() {
+    distance = getBinLevel();
+    binLevel = map(distance, binHeight, 0, 0, 100);
+
+    Serial.print("📏 Bin Level: ");
+    Serial.print(distance);
+    Serial.print(" cm (");
+    Serial.print(binLevel);
+    Serial.println("%)");
+
+    Blynk.virtualWrite(V0, distance);
+    Blynk.virtualWrite(V1, binLevel);
+
+    // Send event when bin level changes significantly
+    if (distance < binFullThreshold && !isBinFull) {
+        Serial.println("🚨 Bin is FULL! Please empty.");
+        Blynk.logEvent("bin_level", "🚨 The Smart Dustbin is FULL! Please empty it.");
+        Blynk.virtualWrite(V2, 1);
+        isBinFull = true;
+        beepLoud(beepFrequency, beepDuration);
+    } else if (distance >= binFullThreshold && isBinFull) {
+        Serial.println("✅ Bin has been emptied.");
+        Blynk.logEvent("bin_level", "✅ The Smart Dustbin has been emptied.");
+        Blynk.virtualWrite(V2, 0);
+        isBinFull = false;
+        noTone(buzzerPin);
+    }
+}
+
+// Measure bin level using ultrasonic sensor
+int getBinLevel() {
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+
+    long duration = pulseIn(echoPin, HIGH, 30000);
+
+    if (duration == 0) {
+        Serial.println("⚠ Error: No ultrasonic echo received.");
+        return binHeight;
+    }
+
+    int distance = duration * 0.034 / 2;
+    return (distance > binHeight) ? binHeight : distance;
+}
+
+// Open lid function
+void openLid() {
+    servoMotor1.write(135);
+    servoMotor2.write(135);
+}
+
+// Close lid function
+void closeLid() {
+    servoMotor1.write(0);
+    servoMotor2.write(0);
+}
+
+// Function to make buzzer louder
+void beepLoud(int freq, int duration) {
+    for (int i = 0; i < duration / 100; i++) {  
+        tone(buzzerPin, freq);  
+        delay(50);  
+        noTone(buzzerPin);  
+        delay(50);  
+    }
+}
